@@ -56,6 +56,7 @@ set(vr_display_cpp
 )
 
 set(vr_display_h
+  src/display/VRAudioToolkit.h
   src/display/VRConsoleNode.h
   src/display/VRDisplayNode.h
   src/display/VRGraphicsToolkit.h

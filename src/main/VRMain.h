@@ -5,6 +5,7 @@
 #include <plugin/VRPluginManager.h>
 
 #include <config/VRDataIndex.h>
+#include <display/VRAudioToolkit.h>
 #include <display/VRDisplayNode.h>
 #include <display/VRGraphicsToolkit.h>
 #include <display/VRWindowToolkit.h>
@@ -515,8 +516,13 @@ public:
 
     void addInputDevice(VRInputDevice* dev);
 
+    VRAudioToolkit* getAudioToolkit(const std::string &name);
+       
     VRGraphicsToolkit* getGraphicsToolkit(const std::string &name);
+       
     VRWindowToolkit* getWindowToolkit(const std::string &name);
+    
+       
     void addPluginSearchPath(const std::string& path) {
       _pluginSearchPath.addPathEntry(path, true);
     }
@@ -555,6 +561,7 @@ public:
     std::vector<VRRenderHandler*>   _renderHandlers;
 
     std::vector<VRInputDevice*>     _inputDevices;
+    std::vector<VRAudioToolkit*>    _audioToolkits;
     std::vector<VRGraphicsToolkit*> _gfxToolkits;
     std::vector<VRWindowToolkit*>   _winToolkits;
     std::vector<VRDisplayNode*>     _displayGraphs;

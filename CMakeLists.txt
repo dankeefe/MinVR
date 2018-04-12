@@ -381,6 +381,15 @@ minvr_optional_adddir(
 )
 
 
+#---- PortAudio ----
+minvr_optional_adddir(
+  WITH_PLUGIN_PORTAUDIO
+  "PortAudio Plugin"
+  "(Requires the PortAudio library)"
+  "plugins/PortAudio"
+)
+
+
 #---- FreeGlut ----
 minvr_optional_adddir(
   WITH_PLUGIN_FREEGLUT

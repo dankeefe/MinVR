@@ -303,6 +303,10 @@ VRMain::~VRMain()
 		for (std::vector<VRDisplayNode*>::iterator it = _displayGraphs.begin(); it != _displayGraphs.end(); ++it) delete *it;
 	}
 
+    if (!_audioToolkits.empty()) {
+        for (std::vector<VRAudioToolkit*>::iterator it = _audioToolkits.begin(); it != _audioToolkits.end(); ++it) delete *it;
+    }
+    
 	if (!_gfxToolkits.empty()) {
 		for (std::vector<VRGraphicsToolkit*>::iterator it = _gfxToolkits.begin(); it != _gfxToolkits.end(); ++it) delete *it;
 	}
@@ -479,356 +483,355 @@ bool VRMain::_startLocalProcess(const std::string &setupName) {
 
 
 void VRMain::initialize(int argc, char **argv) {
-
-  VRLOG_H1("INITIALIZING MINVR");
-
-  VRLOG_H2("Reading MinVR Configuration from Command Line Options");
-  bool execute = parseCommandLine(argc, argv);
-
-  if (_config->empty()) {
-
-    VRERROR("No config data available.",
-            "Something is wrong with your configuration file specification.");
-  }
-
-  // Create an empty list of VRSetups that need starting.
-	VRStringArray vrSetupsToStartArray;
-
-	if (_config->exists("VRSetupsToStart","/")) {
-
-    // A comma-separated list of vrSetupsToStart was provided.  Copy
-    // it into our list.
-		std::string vrSetupsToStart = _config->getValue("VRSetupsToStart","/");
-		VRString elem;
-		std::stringstream ss(vrSetupsToStart);
-		while (std::getline(ss, elem, ',')) {
-			vrSetupsToStartArray.push_back(elem);
-		}
-
-	} else {
-
-    // No vrSetupsToStart are explicitly listed.  So start all of
-		// VRSetups listed in the config file.
-    if (_config->exists("/MinVR/VRSetups")) {
-
-      VRContainer names = _config->getValue("/MinVR/VRSetups");
-      for (VRContainer::const_iterator it = names.begin();
-           it != names.end(); ++it) {
-
-        vrSetupsToStartArray.push_back("/MinVR/VRSetups/" + *it);
-      }
-    } else {
-
-      // We have no list of setups.  Let's try starting everything with a
-      // 'hostType' attribute.
-      VRContainer names = _config->selectByAttribute("hostType","*");
-      for (VRContainer::const_iterator it = names.begin();
-           it != names.end(); ++it) {
-
-        vrSetupsToStartArray.push_back(*it);
-      }
+    
+    VRLOG_H1("INITIALIZING MINVR");
+    
+    VRLOG_H2("Reading MinVR Configuration from Command Line Options");
+    bool execute = parseCommandLine(argc, argv);
+    
+    if (_config->empty()) {
+        VRERROR("No config data available.",
+                "Something is wrong with your configuration file specification.");
     }
-  }
-
-  // Check to see if we've got anything to start.
-	if (vrSetupsToStartArray.empty()) {
-
-    VRERROR("No VRSetups to start are defined.",
-            "Your configuration must contain at least one VRSetup element.");
-
-	}
-  else {
-    VRLOG_STATUS("Will start the following VRSetup(s) found in the MinVR config data:")
-    for (vector<std::string>::iterator it = vrSetupsToStartArray.begin(); it != vrSetupsToStartArray.end(); it++)  {
-      VRLOG_STATUS("  " + *it)
+    
+    // Create an empty list of VRSetups that need starting.
+    VRStringArray vrSetupsToStartArray;
+    
+    if (_config->exists("VRSetupsToStart","/")) {
+        // A comma-separated list of vrSetupsToStart was provided.  Copy
+        // it into our list.
+        std::string vrSetupsToStart = _config->getValue("VRSetupsToStart","/");
+        VRString elem;
+        std::stringstream ss(vrSetupsToStart);
+        while (std::getline(ss, elem, ',')) {
+            vrSetupsToStartArray.push_back(elem);
+        }
     }
-  }
-
-
-
-  // STEP 1: Loop through the setups to start.  If they belong on another
-  // machine, ssh them over there and let them run.  Adopt the first one
-  // that starts on this machine.  If there are more than one to be started
-  // on this machine, fork (or the Win equivalent) them into separate
-  // processes.
-  VRLOG_H2("Parse VRSetups and Start Sub-Processes");
-
-  for (vector<std::string>::iterator it = vrSetupsToStartArray.begin();
-       it != vrSetupsToStartArray.end(); it++)  {
-
-    if (_config->exists("HostIP", *it) && !_config->exists("StartedSSH", "/")) {
-
-      // Remote setups need to be started via ssh.
-      _startSSHProcess(*it);
-
-    } else {
-
-      if (_name.empty()) {
-
-        // The first local process might as well be this one.
-        _name = *it;
-
-      } else {
-
-        // This method returns true for a spawned child process.
-        if (_startLocalProcess(*it)) break;
-
-      }
+    else {
+        // No vrSetupsToStart are explicitly listed.  So start all of
+        // VRSetups listed in the config file.
+        if (_config->exists("/MinVR/VRSetups")) {
+            
+            VRContainer names = _config->getValue("/MinVR/VRSetups");
+            for (VRContainer::const_iterator it = names.begin();
+                 it != names.end(); ++it) {
+                
+                vrSetupsToStartArray.push_back("/MinVR/VRSetups/" + *it);
+            }
+        }
+        else {
+            // We have no list of setups.  Let's try starting everything with a
+            // 'hostType' attribute.
+            VRContainer names = _config->selectByAttribute("hostType","*");
+            for (VRContainer::const_iterator it = names.begin();
+                 it != names.end(); ++it) {
+                
+                vrSetupsToStartArray.push_back(*it);
+            }
+        }
     }
-  }
-
-  // All the processes with names have been started.  If this process
-  // has no name, it must not be necessary to keep it going.
-  if (_name.empty()) {
-    VRLOG_STATUS("Ok. All sub-processes have been started, and no VRSetup was specified for the master process - Exiting.");
-    exit(1);
-  } else {
-    VRLOG_STATUS("Starting VRSetup: " + _name);
-  }
-
-  // STEP 4:  Sanity check to make sure the vrSetup we are continuing with is
-  // actually defined in the config settings that have been loaded.
-	if (!_config->exists(_name)) {
-    VRERROR("VRMain Error: The VRSetup " +
-            _name + " has not been loaded through a config file.",
-            "Your config file must contain a VRSetup element.");
-  }
-
-  // For everything from this point on, the VRSetup name for this process is
-  // stored in _name, and this becomes the base namespace for all of the
-  // VRDataIndex lookups that we do.
-
-
-  // STEP 5: LOAD PLUGINS:
-  VRLOG_H2("Load Plugins");
-
-	// Load plugins from the plugin directory.  This will add their
-	// factories to the master VRFactory.
-
-
-  // MinVR will try to load plugins based on a search path.  To specify
-  // custom paths for an application, use VRSearchPlugin.addPathEntry(), or
-  // add it to the configuration through a configuration file, or the
-  // command line.
-  //
-  // Any search path specified in the config file is prepended to the
-  // default search path.
-  if (_config->exists("/MinVR/PluginPath")) {
-    std::string path = _config->getValue("/MinVR/PluginPath");
-    VRLOG_STATUS("Adding custom location to the plugin search path:" + path);
-    _pluginSearchPath.digestPathString(path);
-  }
-
-  // Get the objects for which a pluginType is specified.
-  std::list<std::string> names = _config->selectByAttribute("pluginType", "*");
-
-  // Sort through the objects returned.
-  for (std::list<std::string>::const_iterator it = names.begin();
-       it != names.end(); it++) {
-
-    // Get the name of the plugin specified for each object.
-    std::string pluginName = _config->getAttributeValue(*it, "pluginType");
-
-    // Find the actual library that is the plugin, and load it, if possible.
-    std::string fullLibName = _pluginSearchPath.findFile(pluginName);
-
-    VRLOG_STATUS("Loading plugin " + pluginName + " from file " + fullLibName + ".");
-    if (!_pluginMgr->loadPlugin(fullLibName)) {
-      VRERROR("VRMain Error: Problem loading plugin: " + pluginName,
-              "Could not load from any of the following filenames: " +
-                _pluginSearchPath.getFullFilenames(pluginName));
+    
+    // Check to see if we've got anything to start.
+    if (vrSetupsToStartArray.empty()) {
+        VRERROR("No VRSetups to start are defined.",
+                "Your configuration must contain at least one VRSetup element.");
     }
-  }
-
-  VRLOG_STATUS("After loading plugins, the VRFactory knows about the following types:");
-  std::vector<std::string> factoryTypes = _factory->getRegisteredTypes();
-  //std::replace(factoryTypes.begin(), factoryTypes.end(), ' ', '\n');
-  for (std::vector<std::string>::iterator it = factoryTypes.begin(); it < factoryTypes.end(); ++it) {
-    VRLOG_STATUS("  " + *it);
-  }
-
-	// STEP 6: CONFIGURE NETWORKING:
-  VRLOG_H2("Start Networking");
-
-	// Check the type of this VRSetup, it should be either "VRServer",
-	// "VRClient", or "VRStandAlone"
-  if(_config->hasAttribute(_name, "hostType")){
-    std::string type = _config->getAttributeValue(_name, "hostType");
-		if (type == "VRServer") {
-			std::string port = _config->getValue("Port", _name);
-			int numClients = _config->getValue("NumClients", _name);
-      stringstream s;
-      s << "This VRSetup is a SERVER running on Port " << port << " and expecting " << numClients << " clients.";
-      VRLOG_STATUS(s.str());
-			_net = new VRNetServer(port, numClients);
-		}
-		else if (type == "VRClient") {
-			std::string port = _config->getValue("Port", _name);
-			std::string ipAddress = _config->getValue("ServerIP", _name);
-      stringstream s;
-      s << "This VRSetup is a CLIENT that will connect to " << ipAddress << ":" << port << ".";
-      VRLOG_STATUS(s.str());
-      _net = new VRNetClient(ipAddress, port);
-		}
-		else { // type == "VRStandAlone"
-      VRLOG_STATUS("This VRSetup is running in stand alone mode -- no networking.")
-			// no networking, leave _net=NULL
-		}
-	}
-
-	// STEP 7: CONFIGURE INPUT DEVICES:
-	{
-    VRLOG_H2("Create Input Devices");
-		std::list<std::string> names = _config->selectByAttribute("inputdeviceType", "*", _name);
-		for (std::list<std::string>::const_iterator it = names.begin(); it != names.end(); ++it) {
-			// create a new input device for each one in the list
-			VRInputDevice *dev = _factory->create<VRInputDevice>(this, _config, *it);
-			if (dev) {
-        VRLOG_STATUS("Creating input device: " + (*it));
-				_inputDevices.push_back(dev);
-			}
-			else{
-
-        VRERROR("Problem creating inputdevice: " + *it + " with inputdeviceType=" + _config->getAttributeValue(*it, "inputdeviceType"),
-                "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
-			}
-		}
-	}
-
-
-
-  // If the program was run with --no-execute, we can stop here.
-  if (!execute) {
-    exit(1);
-  }
-
-  ///////////////  Ok, now execute.
-
-
-
-	// STEP 8: CONFIGURE WINDOWS
-	{
-    VRLOG_H2("Create Display Devices");
-
-    // Find all the display nodes.
-    std::list<std::string> displayNodeNames =
-      _config->selectByAttribute("displaynodeType", "*", _name, true);
-
-    // Loop through the display nodes, creating graphics toolkits where necessary.
-		for (std::list<std::string>::const_iterator it = displayNodeNames.begin();
-         it != displayNodeNames.end(); ++it) {
-			// CONFIGURE GRAPHICS TOOLKIT
-
-      std::string graphicsToolkitName =
-        _config->getByAttribute("graphicstoolkitType", "*", *it);
-
-      // If there is no graphics toolkit to be found here, we can't
-      // really do anything, so throw an error.
-      if (graphicsToolkitName.empty()) {
-        VRWARNING("No graphics toolkit found in:" + *it,
-                  "Is there an element with 'graphicstoolkitType' specified in your config file?");
-      }
-
-      // Create a new graphics toolkit.
-      VRGraphicsToolkit *gtk =
-        _factory->create<VRGraphicsToolkit>(this, _config, graphicsToolkitName);
-
-      if (gtk) {
-        _config->addData(*it + "/GraphicsToolkit", gtk->getName());
-
-        bool exists = false;
-        // Check to see if this toolkit is already in our list.
-        for (std::vector<VRGraphicsToolkit*>::iterator it_gfxToolkits =
-               _gfxToolkits.begin();
-             it_gfxToolkits != _gfxToolkits.end(); ++it_gfxToolkits) {
-
-          if ((*it_gfxToolkits)->getName() == gtk->getName()) {
-            // If it already exists, then never mind.
-            exists = true;
-            delete gtk;
-            break;
-          }
+    else {
+        VRLOG_STATUS("Will start the following VRSetup(s) found in the MinVR config data:")
+        for (vector<std::string>::iterator it = vrSetupsToStartArray.begin(); it != vrSetupsToStartArray.end(); it++)  {
+            VRLOG_STATUS("  " + *it)
         }
-        // If this toolkit isn't already in the list, add it.
-        if (!exists) {
-          VRLOG_STATUS("Creating Graphics Toolkit: " + graphicsToolkitName);
-          _gfxToolkits.push_back(gtk);
+    }
+    
+    
+    
+    // STEP 1: Loop through the setups to start.  If they belong on another
+    // machine, ssh them over there and let them run.  Adopt the first one
+    // that starts on this machine.  If there are more than one to be started
+    // on this machine, fork (or the Win equivalent) them into separate
+    // processes.
+    VRLOG_H2("Parse VRSetups and Start Sub-Processes");
+    
+    for (vector<std::string>::iterator it = vrSetupsToStartArray.begin();
+         it != vrSetupsToStartArray.end(); it++)
+    {
+        if (_config->exists("HostIP", *it) && !_config->exists("StartedSSH", "/")) {
+            // Remote setups need to be started via ssh.
+            _startSSHProcess(*it);
+            
         }
-
-      } else {
-
-        VRERROR("Problem creating graphics toolkit: " + graphicsToolkitName + " with graphicstoolkit=" +
-                _config->getAttributeValue(graphicsToolkitName, "graphicstoolkitType"),
-                "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
-      }
-
-
-      // CONFIGURE WINDOW TOOLKIT
-
-      std::string windowToolkitName =
-        _config->getByAttribute("windowtoolkitType", "*", *it);
-
-      // If there is no window toolkit to be found here, we can't
-      // really do anything, so throw an error.
-      if (windowToolkitName.empty()) {
-        VRERROR("No window toolkit found in:" + *it,
-                "Is there an element with 'windowtoolkitType' in your config file?");
-      }
-
-      // Create a new window toolkit.
-      VRWindowToolkit *wtk =
-        _factory->create<VRWindowToolkit>(this, _config, windowToolkitName);
-
-      if (wtk) {
-        _config->addData(*it + "/WindowToolkit", wtk->getName());
-
-        bool exists = false;
-        for (std::vector<VRWindowToolkit*>::iterator it_winToolkits =
-               _winToolkits.begin();
-             it_winToolkits != _winToolkits.end(); ++it_winToolkits) {
-
-          if ((*it_winToolkits)->getName() == wtk->getName()) {
-            exists = true;
-            delete wtk;
-            break;
-          }
+        else {
+            if (_name.empty()) {
+                // The first local process might as well be this one.
+                _name = *it;
+            }
+            else {
+                // This method returns true for a spawned child process.
+                if (_startLocalProcess(*it)) break;
+            }
         }
-        if (!exists) {
-          VRLOG_STATUS("Creating Window Toolkit: " + graphicsToolkitName);
-          _winToolkits.push_back(wtk);
+    }
+    
+    // All the processes with names have been started.  If this process
+    // has no name, it must not be necessary to keep it going.
+    if (_name.empty()) {
+        VRLOG_STATUS("Ok. All sub-processes have been started, and no VRSetup "
+                     "was specified for the master process - Exiting.");
+        exit(1);
+    }
+    else {
+        VRLOG_STATUS("Starting VRSetup: " + _name);
+    }
+    
+    // STEP 4:  Sanity check to make sure the vrSetup we are continuing with is
+    // actually defined in the config settings that have been loaded.
+    if (!_config->exists(_name)) {
+        VRERROR("VRMain Error: The VRSetup " + _name +
+                " has not been loaded through a config file.",
+                "Your config file must contain a VRSetup element.");
+    }
+    
+    // For everything from this point on, the VRSetup name for this process is
+    // stored in _name, and this becomes the base namespace for all of the
+    // VRDataIndex lookups that we do.
+    
+    
+    // STEP 5: LOAD PLUGINS:
+    VRLOG_H2("Load Plugins");
+    
+    // Load plugins from the plugin directory.  This will add their
+    // factories to the master VRFactory.
+    
+    // MinVR will try to load plugins based on a search path.  To specify
+    // custom paths for an application, use VRSearchPlugin.addPathEntry(), or
+    // add it to the configuration through a configuration file, or the
+    // command line.
+    //
+    // Any search path specified in the config file is prepended to the
+    // default search path.
+    if (_config->exists("/MinVR/PluginPath")) {
+        std::string path = _config->getValue("/MinVR/PluginPath");
+        VRLOG_STATUS("Adding custom location to the plugin search path:" + path);
+        _pluginSearchPath.digestPathString(path);
+    }
+    
+    // Get the objects for which a pluginType is specified.
+    std::list<std::string> names = _config->selectByAttribute("pluginType", "*");
+    
+    // Loop through the objects returned, loading each plugin.
+    for (std::list<std::string>::const_iterator it = names.begin();
+         it != names.end(); it++)
+    {
+        // Get the name of the plugin specified for each object.
+        std::string pluginName = _config->getAttributeValue(*it, "pluginType");
+        
+        // Find the actual library that is the plugin, and load it, if possible.
+        std::string fullLibName = _pluginSearchPath.findFile(pluginName);
+        
+        VRLOG_STATUS("Loading plugin " + pluginName + " from file " + fullLibName + ".");
+        if (!_pluginMgr->loadPlugin(fullLibName)) {
+            VRERROR("VRMain Error: Problem loading plugin: " + pluginName,
+                    "Could not load from any of the following filenames: " +
+                    _pluginSearchPath.getFullFilenames(pluginName));
         }
-      }	else {
-        VRERROR("Problem creating window toolkit: " + windowToolkitName + " with windowtoolkitType=" +
-                _config->getAttributeValue(windowToolkitName, "windowtoolkitType"),
-                 "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
-      }
+    }
+    
+    VRLOG_STATUS("After loading plugins, the VRFactory knows about the following types:");
+    std::vector<std::string> factoryTypes = _factory->getRegisteredTypes();
+    //std::replace(factoryTypes.begin(), factoryTypes.end(), ' ', '\n');
+    for (std::vector<std::string>::iterator it = factoryTypes.begin(); it < factoryTypes.end(); ++it) {
+        VRLOG_STATUS("  " + *it);
+    }
+    
+    
+    // STEP 6: CONFIGURE NETWORKING:
+    VRLOG_H2("Start Networking");
+    
+    // Check the type of this VRSetup, it should be either "VRServer",
+    // "VRClient", or "VRStandAlone"
+    if (_config->hasAttribute(_name, "hostType")){
+        std::string type = _config->getAttributeValue(_name, "hostType");
+        if (type == "VRServer") {
+            std::string port = _config->getValue("Port", _name);
+            int numClients = _config->getValue("NumClients", _name);
+            stringstream s;
+            s << "This VRSetup is a SERVER running on Port " << port
+              << " and expecting " << numClients << " clients.";
+            VRLOG_STATUS(s.str());
+            _net = new VRNetServer(port, numClients);
+        }
+        else if (type == "VRClient") {
+            std::string port = _config->getValue("Port", _name);
+            std::string ipAddress = _config->getValue("ServerIP", _name);
+            stringstream s;
+            s << "This VRSetup is a CLIENT that will connect to "
+              << ipAddress << ":" << port << ".";
+            VRLOG_STATUS(s.str());
+            _net = new VRNetClient(ipAddress, port);
+        }
+        else { // type == "VRStandAlone"
+            VRLOG_STATUS("This VRSetup is running in stand alone mode -- no networking.")
+            // no networking, leave _net=NULL
+        }
+    }
+    
+    // STEP 7: CONFIGURE INPUT DEVICES:
+    {
+        VRLOG_H2("Create Input Devices");
+        std::list<std::string> names = _config->selectByAttribute("inputdeviceType", "*", _name);
+        for (std::list<std::string>::const_iterator it = names.begin(); it != names.end(); ++it) {
+            // create a new input device for each one in the list
+            VRInputDevice *dev = _factory->create<VRInputDevice>(this, _config, *it);
+            if (dev) {
+                VRLOG_STATUS("Creating input device: " + (*it));
+                _inputDevices.push_back(dev);
+            }
+            else{
+                
+                VRERROR("Problem creating inputdevice: " + *it + " with inputdeviceType=" +
+                        _config->getAttributeValue(*it, "inputdeviceType"),
+                        "This type is not registered with the VRFactory for some reason --"
+                        " check for typos or a missing plugin.");
+            }
+        }
+    }
+    
+    
+    
+    // If the program was run with --no-execute, we can stop here.
+    // DFK:  Why stop here??
+    if (!execute) {
+        exit(1);
+    }
+    
+    ///////////////  Ok, now execute.
+    
+    
+    
+    // STEP 8: CONFIGURE DISPLAY TOOLKITS AND DISPLAY GRAPHS
+    VRLOG_H2("Create Window, Graphics, and Audio Toolkits");
 
-			// add window to the displayGraph list
-			VRDisplayNode *dg = _factory->create<VRDisplayNode>(this, _config, *it);
-			if (dg) {
-				_displayGraphs.push_back(dg);
-			}
-			else{
-        VRWARNING("Problem creating window: " + *it + " with windowType=" +
-                  _config->getAttributeValue(*it, "windowType"),
-                  "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
-			}
-		}
-	}
-
-  VRLOG_STATUS("Created the following Display Graph(s):")
-  for (std::vector<VRDisplayNode*>::iterator it = _displayGraphs.begin(); it != _displayGraphs.end(); it++) {
-     stringstream s;
-     s << *(*it) << std::endl;
-     VRLOG_STATUS(s.str());
-  }
-
-	_initialized = true;
-  _shutdown = false;
-
-  // Check to make sure the display node tree is properly constructed.
-  // This function will throw an error if it is not.
-  auditValuesFromAllDisplays();
+    
+    // GRAPHICS TOOLKITS
+    // Create and register all graphics toolkits specified in the config file
+    std::list<std::string> gToolkitNames =
+    _config->selectByAttribute("graphicstoolkitType", "*", _name, true);
+    for (std::list<std::string>::const_iterator it = gToolkitNames.begin();
+         it != gToolkitNames.end(); ++it)
+    {
+        if (getGraphicsToolkit(*it)) {
+            VRERROR("Tried to create GraphicsToolkit " + *it + " a second time.",
+                    "Check your config file for a duplicate graphicstoolkitType entry.");
+        }
+        else {
+            VRGraphicsToolkit *gtk = _factory->create<VRGraphicsToolkit>(this, _config, *it);
+            if (gtk) {
+                VRLOG_STATUS("Creating Graphics Toolkit: " + *it);
+                _gfxToolkits.push_back(gtk);
+            }
+            else {
+                VRERROR("Problem creating graphics toolkit: " + *it + " with graphicstoolkitType=" +
+                        _config->getAttributeValue(*it, "graphicstoolkitType"),
+                        "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
+            }
+            
+        }
+    }
+    
+    // WINDOW TOOLKITS
+    // Create and register all window toolkits specified in the config file
+    std::list<std::string> wToolkitNames =
+    _config->selectByAttribute("windowstoolkitType", "*", _name, true);
+    for (std::list<std::string>::const_iterator it = wToolkitNames.begin();
+         it != wToolkitNames.end(); ++it)
+    {
+        if (getWindowToolkit(*it)) {
+            VRERROR("Tried to create WindowToolkit " + *it + " a second time.",
+                    "Check your config file for a duplicate windowtoolkitType entry.");
+        }
+        else {
+            VRWindowToolkit *wtk = _factory->create<VRWindowToolkit>(this, _config, *it);
+            if (wtk) {
+                VRLOG_STATUS("Creating Window Toolkit: " + *it);
+                _winToolkits.push_back(wtk);
+            }
+            else {
+                VRERROR("Problem creating window toolkit: " + *it + " with windowtoolkitType=" +
+                        _config->getAttributeValue(*it, "windowtoolkitType"),
+                        "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
+            }
+            
+        }
+    }
+    
+    // AUDIO TOOLKITS
+    // Create and register all audio toolkits specified in the config file
+    std::list<std::string> aToolkitNames =
+    _config->selectByAttribute("audiotoolkitType", "*", _name, true);
+    for (std::list<std::string>::const_iterator it = aToolkitNames.begin();
+         it != aToolkitNames.end(); ++it)
+    {
+        if (getAudioToolkit(*it)) {
+            VRERROR("Tried to create AudioToolkit " + *it + " a second time.",
+                    "Check your config file for a duplicate audiotoolkitType entry.");
+        }
+        else {
+            VRAudioToolkit *atk = _factory->create<VRAudioToolkit>(this, _config, *it);
+            if (atk) {
+                VRLOG_STATUS("Creating Audio Toolkit: " + *it);
+                _audioToolkits.push_back(atk);
+            }
+            else {
+                VRERROR("Problem creating audio toolkit: " + *it + " with audiotoolkitType=" +
+                        _config->getAttributeValue(*it, "audiotoolkitType"),
+                        "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
+            }
+            
+        }
+    }
+    
+    
+    
+    // DISPLAY GRAPHS
+    {
+        VRLOG_H2("Create Display Graphs");
+        
+        // Find all the display nodes.
+        std::list<std::string> displayNodeNames =
+        _config->selectByAttribute("displaynodeType", "*", _name, true);
+        
+        // Loop through the display nodes, creating graphics toolkits where necessary.
+        for (std::list<std::string>::const_iterator it = displayNodeNames.begin();
+             it != displayNodeNames.end(); ++it) {
+            
+            
+            
+            // add window to the displayGraph list
+            VRDisplayNode *dg = _factory->create<VRDisplayNode>(this, _config, *it);
+            if (dg) {
+                _displayGraphs.push_back(dg);
+            }
+            else{
+                VRWARNING("Problem creating window: " + *it + " with windowType=" +
+                          _config->getAttributeValue(*it, "windowType"),
+                          "This type is not registered with the VRFactory for some reason -- check for typos or a missing plugin.");
+            }
+        }
+    }
+    
+    VRLOG_STATUS("Created the following Display Graph(s):")
+    for (std::vector<VRDisplayNode*>::iterator it = _displayGraphs.begin(); it != _displayGraphs.end(); it++) {
+        stringstream s;
+        s << *(*it) << std::endl;
+        VRLOG_STATUS(s.str());
+    }
+    
+    _initialized = true;
+    _shutdown = false;
+    
+    // Check to make sure the display node tree is properly constructed.
+    // This function will throw an error if it is not.
+    auditValuesFromAllDisplays();
 }
 
 void
